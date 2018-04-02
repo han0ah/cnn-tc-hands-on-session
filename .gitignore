@@ -1,6 +1,7 @@
 *.npy
 runs/
 .idea/
+data/model-brown-vectors.bin
 # Created by https://www.gitignore.io/api/python,ipythonnotebook
 
 ### Python ###
