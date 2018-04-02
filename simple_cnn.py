@@ -1,16 +1,24 @@
+import os
 import tensorflow as tf
 import numpy as np
 import data_helpers
-from text_cnn import TextCNN
-from tensorflow.contrib import learn
+import gensim
+from gensim.models.word2vec import Word2Vec
 
 print("Loading data...")
 x_text, y = data_helpers.load_data_and_labels("./data/rt-polaritydata/rt-polarity.pos", "./data/rt-polaritydata/rt-polarity.neg")
+#w2vec_model =  Word2Vec.load('./data/GoogleNews-vectors-negative300.bin')
+w2vec_model = gensim.models.KeyedVectors.load_word2vec_format('./data/GoogleNews-vectors-negative300.bin', binary=True)
+embedding_size = w2vec_model.vector_size
+sequence_length = max([len(x.split(" ")) for x in x_text])
+num_classes = 2
 
-# Build vocabulary
-max_document_length = max([len(x.split(" ")) for x in x_text])
-vocab_processor = learn.preprocessing.VocabularyProcessor(max_document_length)
-x = np.array(list(vocab_processor.fit_transform(x_text)))
+x = np.zeros((len(x_text), sequence_length, embedding_size), dtype=float)
+for i,xi in enumerate(x_text):
+    tokens = xi.split(' ')
+    for j,token in enumerate(tokens):
+        if token in w2vec_model.vocab:
+            x[i,j] = w2vec_model[token]
 
 # Randomly shuffle data
 np.random.seed(10)
@@ -23,33 +31,27 @@ dev_sample_index = -1 * int(.1 * float(len(y)))
 x_train, x_dev = x_shuffled[:dev_sample_index], x_shuffled[dev_sample_index:]
 y_train, y_dev = y_shuffled[:dev_sample_index], y_shuffled[dev_sample_index:]
 
-del x, y, x_shuffled, y_shuffled
+del x, y, x_shuffled, y_shuffled, w2vec_model
 
-print("Vocabulary Size: {:d}".format(len(vocab_processor.vocabulary_)))
 print("Train/Dev split: {:d}/{:d}".format(len(y_train), len(y_dev)))
 
 
 ######################## TensorFlow Graph 구성
 
 # 값 초기화
-sequence_length = x_train.shape[1]
-num_classes = y_train.shape[1]
-vocab_size = len(vocab_processor.vocabulary_)
-embedding_size = 128
+
 filter_sizes = [3,4,5]
-num_filters = 50
+num_filters = 8
 dropout_keep_prob = 0.5
-num_epoch = 128
+num_epoch = 30
 batch_size = 100
 
 # X, Y 정의
-input_x = tf.placeholder(tf.int32, [None, sequence_length], name='input_x')
+input_x = tf.placeholder(tf.float32, [None, sequence_length, embedding_size], name='input_x')
 input_y = tf.placeholder(tf.float32, [None, num_classes], name="input_y")
 
-# Embedding Layer
-W = tf.Variable(tf.random_uniform([vocab_size, embedding_size], -1.0, 1.0), name="W")
-embedded_chars = tf.nn.embedding_lookup(W, input_x)
-embedded_chars_expanded = tf.expand_dims(embedded_chars, -1)
+
+extended_input_x = tf.expand_dims(input_x, -1)
 
 # Convolution and Max-Pooling
 pooled_outputs = []
@@ -57,7 +59,7 @@ for i, filter_size in enumerate(filter_sizes):
     filter_shape = [filter_size, embedding_size, 1, num_filters]
     W_c = tf.Variable(tf.truncated_normal(filter_shape, stddev=0.1), name="W_c")
     conv = tf.nn.conv2d(
-        embedded_chars_expanded,
+        extended_input_x,
         W_c,
         strides=[1, 1, 1, 1],
         padding="VALID",
@@ -95,7 +97,6 @@ accuracy = tf.reduce_mean(tf.cast(correct_predictions, "float"))
 
 #optimizer
 optimizer = tf.train.AdamOptimizer(1e-3).minimize(loss)
-
 
 sess = tf.Session()
 sess.run(tf.global_variables_initializer())
